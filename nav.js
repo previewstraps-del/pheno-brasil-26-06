@@ -107,12 +107,12 @@ async function getDeviceId() {
 async function verificar2FASession(uid) {
   try {
     const deviceId = await getDeviceId();
-    const snap = await getDoc(doc(db, '2fa_sessions', uid));
+    // Sessão por uid+deviceId — cada dispositivo tem sua própria sessão
+    const sessionId = uid + '_' + deviceId;
+    const snap = await getDoc(doc(db, '2fa_sessions', sessionId));
     if (!snap.exists()) return false;
 
     const data = snap.data();
-    if (data.deviceId !== deviceId) return false;
-
     const agora = Date.now();
     const expira = data.expiresAt?.toMillis?.() || 0;
     return agora < expira;
@@ -123,11 +123,13 @@ async function verificar2FASession(uid) {
 
 async function salvar2FASession(uid) {
   try {
-    const deviceId = await getDeviceId();
-    const agora    = new Date();
-    const expira   = new Date(agora.getTime() + 24 * 60 * 60 * 1000); // +24h
+    const deviceId  = await getDeviceId();
+    const sessionId = uid + '_' + deviceId;
+    const agora     = new Date();
+    const expira    = new Date(agora.getTime() + 24 * 60 * 60 * 1000); // +24h
 
-    await setDoc(doc(db, '2fa_sessions', uid), {
+    await setDoc(doc(db, '2fa_sessions', sessionId), {
+      uid,
       deviceId,
       validatedAt: serverTimestamp(),
       expiresAt:   expira
