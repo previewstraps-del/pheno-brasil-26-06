@@ -107,12 +107,12 @@ async function getDeviceId() {
 async function verificar2FASession(uid) {
   try {
     const deviceId = await getDeviceId();
-    // Sessão por uid+deviceId — cada dispositivo tem sua própria sessão
-    const sessionId = uid + '_' + deviceId;
-    const snap = await getDoc(doc(db, '2fa_sessions', sessionId));
+    const snap = await getDoc(doc(db, '2fa_sessions', uid));
     if (!snap.exists()) return false;
 
     const data = snap.data();
+    if (data.deviceId !== deviceId) return false;
+
     const agora = Date.now();
     const expira = data.expiresAt?.toMillis?.() || 0;
     return agora < expira;
@@ -123,13 +123,11 @@ async function verificar2FASession(uid) {
 
 async function salvar2FASession(uid) {
   try {
-    const deviceId  = await getDeviceId();
-    const sessionId = uid + '_' + deviceId;
-    const agora     = new Date();
-    const expira    = new Date(agora.getTime() + 24 * 60 * 60 * 1000); // +24h
+    const deviceId = await getDeviceId();
+    const agora    = new Date();
+    const expira   = new Date(agora.getTime() + 24 * 60 * 60 * 1000); // +24h
 
-    await setDoc(doc(db, '2fa_sessions', sessionId), {
-      uid,
+    await setDoc(doc(db, '2fa_sessions', uid), {
       deviceId,
       validatedAt: serverTimestamp(),
       expiresAt:   expira
@@ -282,6 +280,9 @@ function injetarModalVerificacaoEmail() {
           <span id="vem-contador" style="display:none;color:var(--muted);font-size:0.82rem"></span>
         </div>
         <div class="form-error" id="vem-error" style="margin-top:0.5rem"></div>
+        <div style="text-align:center;margin-top:1.2rem;padding-top:1rem;border-top:1px solid var(--border)">
+          <a style="color:var(--muted);font-size:0.82rem;cursor:pointer" onclick="window.sairSemVerificar()">Não quero verificar agora — Sair</a>
+        </div>
       </div>
     </div>
   `);
@@ -322,6 +323,14 @@ window.reenviarVerificacaoEmail = async () => {
     const errEl = safeElement('vem-error');
     if (errEl) errEl.textContent = 'Erro ao reenviar. Aguarde um momento.';
   }
+};
+
+window.sairSemVerificar = async () => {
+  if (_vemTimer) { clearInterval(_vemTimer); _vemTimer = null; }
+  safeElement('modal-verificar-email')?.classList.remove('open');
+  document.body.style.overflow = '';
+  try { await signOut(auth); } catch (_) {}
+  location.reload();
 };
 
 window.verificarEmailConfirmado = async () => {
@@ -571,8 +580,32 @@ async function iniciar2FA(uid, email, roles) {
     if (qrWrap) qrWrap.style.display = 'none';
     if (reenv)  reenv.style.display  = 'block';
 
-    await enviarCodigo2FAEmail(uid, email);
-    setTimeout(() => iniciarContador2FA(), 100);
+    // Checa se já existe código válido e ainda dentro dos 60s
+    try {
+      const codeSnap = await getDoc(doc(db, '2fa_codes', uid));
+      if (codeSnap.exists()) {
+        const codeData  = codeSnap.data();
+        const enviadoEm = codeData.criadoEm?.toMillis?.() || 0;
+        const agora     = Date.now();
+        const restante  = Math.ceil(60 - (agora - enviadoEm) / 1000);
+        if (restante > 0) {
+          // Código ainda válido — não reenviar, mostrar contador com tempo restante
+          sub.textContent = `Já enviamos um código para ${email}. Verifique sua caixa de entrada.`;
+          setTimeout(() => iniciarContador2FA(restante), 100);
+        } else {
+          // Expirou — reenviar
+          await enviarCodigo2FAEmail(uid, email);
+          setTimeout(() => iniciarContador2FA(), 100);
+        }
+      } else {
+        // Nunca enviou — enviar agora
+        await enviarCodigo2FAEmail(uid, email);
+        setTimeout(() => iniciarContador2FA(), 100);
+      }
+    } catch (_) {
+      await enviarCodigo2FAEmail(uid, email);
+      setTimeout(() => iniciarContador2FA(), 100);
+    }
   } else {
     // TOTP
     titulo.textContent = 'Google Authenticator';
@@ -679,9 +712,11 @@ window._reenviar2FA = async () => {
   else if (errEl) errEl.textContent = 'Erro ao reenviar. Tente novamente.';
 };
 
-window._cancelar2FA = () => {
+window._cancelar2FA = async () => {
   fechar2FAModal();
   if (_2fa_resolve) _2fa_resolve(false);
+  try { await signOut(auth); } catch (_) {}
+  location.reload();
 };
 
 function fechar2FAModal() {
