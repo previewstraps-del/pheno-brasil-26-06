@@ -1286,14 +1286,9 @@ export function initAuth() {
       // Elevados (admin/breeder/vendedor) sempre passam pelo 2FA por email
       // Usuários comuns só passam pelo 2FA TOTP se já tiverem TOTP configurado
       const isElevado = isAdmin || roles.includes('breeder') || roles.includes('vendedor');
-      let totpConfigurado = false;
-      if (!isElevado) {
-        try {
-          const userSnap = await getDoc(doc(db, 'users', user.uid));
-          totpConfigurado = userSnap.exists() && userSnap.data()?.totpConfigurado === true;
-        } catch (_) {}
-      }
-      const precisa2FA = isElevado || totpConfigurado;
+      // Elevados: 2FA por email sempre
+      // Usuários comuns: TOTP sempre (configurar na primeira vez, validar nas seguintes)
+      const precisa2FA = true;
 
       if (precisa2FA) {
         const sessionValida = await verificar2FASession(user.uid);
