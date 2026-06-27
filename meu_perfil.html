@@ -351,8 +351,6 @@
       </div>
     </div>
  
-
-  
  
     <br>
     <button class="btn-salvar" id="btn-salvar-dados" onclick="salvarDados()">Salvar alterações</button>
@@ -407,24 +405,27 @@
   let usuarioAtual = null;
   let fotoAtualUrl = '';
 
-  // Listener upload foto perfil
-  document.getElementById('campo-foto-input').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const b64 = ev.target.result;
-      document.getElementById('campo-foto-input').dataset.base64 = b64;
-      document.getElementById('campo-foto-nome').textContent = file.name;
-      // preview
-      document.getElementById('avatar-placeholder').style.display = 'none';
-      const img = document.getElementById('avatar-img');
-      img.src = b64;
-      img.style.display = 'block';
-    };
-    reader.readAsDataURL(file);
-  });
+  // Listener upload foto perfil — aguarda DOM estar pronto
+  const fotoInput = document.getElementById('campo-foto-input');
+  if (fotoInput) {
+    fotoInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const b64 = ev.target.result;
+        document.getElementById('campo-foto-input').dataset.base64 = b64;
+        document.getElementById('campo-foto-nome').textContent = file.name;
+        // preview
+        document.getElementById('avatar-placeholder').style.display = 'none';
+        const img = document.getElementById('avatar-img');
+        img.src = b64;
+        img.style.display = 'block';
+      };
+      reader.readAsDataURL(file);
+    });
+  }
  
   window.mostrarToast = (msg, tipo = 'ok') => {
     const t = document.getElementById('toast');
@@ -452,13 +453,7 @@
     });
   });
  
-  // ── Máscara CEP ─────────────────────────────────────────
-  document.getElementById('campo-cep').addEventListener('input', e => {
-    let v = e.target.value.replace(/\D/g, '').slice(0, 8);
-    if (v.length > 5) v = v.slice(0, 5) + '-' + v.slice(5);
-    e.target.value = v;
-  });
- 
+
   // ── Máscara telefone ────────────────────────────────────
   document.getElementById('campo-telefone').addEventListener('input', e => {
     let v = e.target.value.replace(/\D/g, '').slice(0, 11);
@@ -480,20 +475,19 @@
       nome:        document.getElementById('campo-nome').value.trim(),
       telefone:    document.getElementById('campo-telefone').value.trim(),
       foto:        document.getElementById('campo-foto-input').dataset.base64 || fotoAtualUrl,
-      cep:         document.getElementById('campo-cep').value.trim(),
-      cidade:      document.getElementById('campo-cidade').value.trim(),
-      estado:      document.getElementById('campo-estado').value.trim(),
-      bairro:      document.getElementById('campo-bairro').value.trim(),
-      rua:         document.getElementById('campo-rua').value.trim(),
-      numero:      document.getElementById('campo-numero').value.trim(),
-      complemento: document.getElementById('campo-complemento').value.trim(),
       atualizadoEm: new Date().toISOString(),
     };
  
     try {
-      await setDoc(doc(db, 'usuarios', usuarioAtual.uid), dados, { merge: true });
+      const resp = await fetch('https://us-central1-phenobrasil.cloudfunctions.net/salvarDadosUsuario', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: usuarioAtual.uid, dados })
+      });
+      const result = await resp.json();
+      if (!result.ok) throw new Error(result.error || 'Erro ao salvar');
+
       document.getElementById('header-nome').textContent = dados.nome || '—';
-      // Atualiza preview do avatar
       if (dados.foto) {
         document.getElementById('avatar-placeholder').style.display = 'none';
         const img = document.getElementById('avatar-img');
@@ -536,18 +530,20 @@
   const carregarPedidos = async (uid) => {
     const container = document.getElementById('pedidos-container');
     try {
-      const q    = query(collection(db, 'pedidos'), where('userId', '==', uid));
-      const snap = await getDocs(q);
- 
-      if (snap.empty) return;
- 
-      const pedidos = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => {
-          const ta = a.criadoEm?.toDate?.() || new Date(a.criadoEm || 0);
-          const tb = b.criadoEm?.toDate?.() || new Date(b.criadoEm || 0);
-          return tb - ta;
-        });
+      const resp = await fetch('https://us-central1-phenobrasil.cloudfunctions.net/buscarPedidosUsuario', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid })
+      });
+      const data = await resp.json();
+
+      if (!data.ok || !data.pedidos?.length) return;
+
+      const pedidos = data.pedidos.sort((a, b) => {
+        const ta = a.criadoEm?._seconds ? a.criadoEm._seconds * 1000 : new Date(a.criadoEm || 0);
+        const tb = b.criadoEm?._seconds ? b.criadoEm._seconds * 1000 : new Date(b.criadoEm || 0);
+        return tb - ta;
+      });
  
       container.innerHTML = '';
  
@@ -644,62 +640,42 @@
       location.href = 'index.html';
       return;
     }
- 
-    let role = null;
- 
+
     try {
-      const snapUsuario = await getDoc(doc(db, 'usuarios', user.uid));
-      if (snapUsuario.exists()) {
-        const data = snapUsuario.data();
-        role = data?.role || 'usuario';
- 
-        // Preenche campos
-        document.getElementById('campo-nome').value        = data.nome        || '';
-        document.getElementById('campo-telefone').value    = data.telefone    || '';
-        document.getElementById('campo-cep').value         = data.cep         || '';
-        document.getElementById('campo-cidade').value      = data.cidade      || '';
-        document.getElementById('campo-estado').value      = data.estado      || '';
-        document.getElementById('campo-bairro').value      = data.bairro      || '';
-        document.getElementById('campo-rua').value         = data.rua         || '';
-        document.getElementById('campo-numero').value      = data.numero      || '';
-        document.getElementById('campo-complemento').value = data.complemento || '';
- 
-        document.getElementById('header-nome').textContent  = data.nome  || user.displayName || 'Usuário';
-        document.getElementById('header-email').textContent = user.email || '—';
-        document.getElementById('campo-email').value        = user.email || '';
- 
-        // Foto atual
-        fotoAtualUrl = data.foto || '';
- 
-        // Avatar preview
-        if (data.foto) {
-          document.getElementById('avatar-placeholder').style.display = 'none';
-          const img = document.getElementById('avatar-img');
-          img.src = data.foto;
-          img.style.display = 'block';
-        } else {
-          const iniciais = (data.nome || user.displayName || 'U').split(' ')
-            .map(n => n[0]).slice(0, 2).join('').toUpperCase();
-          document.getElementById('avatar-placeholder').textContent = iniciais;
-        }
+      const snap = await getDoc(doc(db, 'users', user.uid));
+      const data = snap.exists() ? snap.data() : {};
+
+      const roles     = Array.isArray(data.roles) ? data.roles : [];
+      const isElevado = roles.includes('breeder') || roles.includes('vendedor');
+
+      if (isElevado) {
+        location.href = 'dashboard.html';
+        return;
       }
+
+      // Preenche campos
+      document.getElementById('campo-nome').value     = data.nome     || user.displayName || '';
+      document.getElementById('campo-telefone').value = data.telefone || '';
+      document.getElementById('campo-email').value    = user.email    || '';
+
+      document.getElementById('header-nome').textContent  = data.nome  || user.displayName || 'Usuário';
+      document.getElementById('header-email').textContent = user.email || '—';
+
+      // Foto
+      fotoAtualUrl = data.foto || '';
+      if (data.foto) {
+        document.getElementById('avatar-placeholder').style.display = 'none';
+        const img = document.getElementById('avatar-img');
+        img.src = data.foto;
+        img.style.display = 'block';
+      } else {
+        const iniciais = (data.nome || user.displayName || 'U').split(' ')
+          .map(n => n[0]).slice(0, 2).join('').toUpperCase();
+        document.getElementById('avatar-placeholder').textContent = iniciais;
+      }
+
     } catch (_) {}
- 
-    if (!role) {
-      try {
-        const snapUsers = await getDoc(doc(db, 'users', user.uid));
-        if (snapUsers.exists()) role = snapUsers.data()?.role || null;
-      } catch (_) {}
-    }
- 
-    if (!role) role = user.email === 'admin@phenobrasil.com' ? 'admin' : 'usuario';
- 
-    if (role === 'admin' || role === 'breeder' || role === 'vendedor') {
-      location.href = 'index.html';
-      alert('❌Acesso negado.❌')
-      return;
-      }
- 
+
     usuarioAtual = user;
     carregarPedidos(user.uid);
   });
